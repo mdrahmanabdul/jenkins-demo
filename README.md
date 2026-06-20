@@ -1,95 +1,59 @@
-# Jenkins → GitHub → EC2 Deployment Notes
+# Spring Boot CI/CD with Jenkins and AWS EC2
 
-## Objective
+## Overview
 
-Automatically deploy a Spring Boot application to an AWS EC2 instance whenever Jenkins builds the project.
+This project demonstrates a complete CI/CD pipeline using:
+
+* Spring Boot
+* GitHub
+* Jenkins (Docker)
+* AWS EC2 (Ubuntu)
+* systemd
+
+The goal is to automatically build and deploy a Spring Boot application whenever changes are pushed to the `main` branch.
 
 ---
 
 # Architecture
 
 ```text
-GitHub Repository
-        ↓
-Jenkins Pipeline
-        ↓
+GitHub
+   ↓
+Jenkins (Docker on EC2)
+   ↓
 Build Spring Boot JAR
-        ↓
-SSH/SCP
-        ↓
-AWS EC2
-        ↓
-systemd Service Restart
-        ↓
-Application Live
+   ↓
+Deploy to EC2
+   ↓
+Restart systemd Service
+   ↓
+Application Available on Port 8080
 ```
 
 ---
 
-# Prerequisites
+# Infrastructure
 
-## Local Machine
+## EC2
 
-* Java 17
-* Git
+* Ubuntu 24/26
+* OpenJDK 17
+* Docker
+* Jenkins (running in Docker)
+
+## Application
+
+* Spring Boot
 * Maven Wrapper (`mvnw`)
-
-## Jenkins
-
-* Running in Docker
-* Pipeline support installed
-* Git support installed
-* SSH Agent plugin installed
-
-## AWS
-
-* Ubuntu EC2 Instance
-* Security Group allowing:
-
-  * Port 22 (SSH)
-  * Port 8080 (Spring Boot App)
-
----
-
-# Spring Boot Project Structure
-
-Repository structure:
-
-```text
-jenkins-demo
-└── JenkinsDemo
-    ├── src
-    ├── pom.xml
-    ├── mvnw
-    ├── mvnw.cmd
-    └── Jenkinsfile
-```
 
 ---
 
 # EC2 Setup
 
-## Connect
-
-```bash
-chmod 400 jenkins-demo.pem
-
-ssh -i jenkins-demo.pem ubuntu@<PUBLIC_IP>
-```
-
-Example:
-
-```bash
-ssh -i jenkins-demo.pem ubuntu@16.176.176.250
-```
-
----
-
 ## Install Java
 
 ```bash
 sudo apt update
-
 sudo apt install openjdk-17-jdk -y
 ```
 
@@ -105,7 +69,6 @@ java -version
 
 ```bash
 sudo mkdir -p /opt/spring-app
-
 sudo chown -R ubuntu:ubuntu /opt/spring-app
 ```
 
@@ -124,6 +87,7 @@ Content:
 ```ini
 [Unit]
 Description=Spring Boot App
+After=network.target
 
 [Service]
 User=ubuntu
@@ -134,26 +98,21 @@ ExecStart=/usr/bin/java -jar /opt/spring-app/app.jar
 SuccessExitStatus=143
 
 Restart=always
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
 ```
 
----
-
-## Enable Service
+Enable:
 
 ```bash
 sudo systemctl daemon-reload
-
 sudo systemctl enable spring-app
-
 sudo systemctl start spring-app
 ```
 
----
-
-## Check Status
+Check:
 
 ```bash
 sudo systemctl status spring-app
@@ -161,59 +120,58 @@ sudo systemctl status spring-app
 
 ---
 
-# Jenkins → EC2 SSH Trust
+# Jenkins Setup
 
----
-
-## Enter Jenkins Container
+## Run Jenkins
 
 ```bash
-docker ps
+docker run -d \
+--name jenkins \
+--restart unless-stopped \
+-p 8081:8080 \
+-p 50000:50000 \
+-v jenkins_home:/var/jenkins_home \
+jenkins/jenkins:lts-jdk17
+```
 
-docker exec -it <container-id> bash
+Access:
+
+```text
+http://<EC2_PUBLIC_IP>:8081
 ```
 
 ---
 
-## Generate SSH Key
+# Jenkins SSH Access
 
-Inside Jenkins container:
+Enter Jenkins container:
+
+```bash
+docker exec -it jenkins bash
+```
+
+Generate SSH key:
 
 ```bash
 ssh-keygen -t rsa -b 4096
 ```
 
----
-
-## View Public Key
+View public key:
 
 ```bash
 cat ~/.ssh/id_rsa.pub
 ```
 
-Copy entire output.
+Copy the public key.
 
 ---
 
-## Add Public Key to EC2
+## Authorize Jenkins on EC2
 
-SSH into EC2:
-
-```bash
-ssh -i jenkins-demo.pem ubuntu@<PUBLIC_IP>
-```
-
-Create SSH folder:
+On EC2:
 
 ```bash
 mkdir -p ~/.ssh
-
-chmod 700 ~/.ssh
-```
-
-Edit:
-
-```bash
 nano ~/.ssh/authorized_keys
 ```
 
@@ -222,17 +180,14 @@ Paste Jenkins public key.
 Permissions:
 
 ```bash
+chmod 700 ~/.ssh
 chmod 600 ~/.ssh/authorized_keys
 ```
 
----
-
-## Verify Jenkins Can SSH
-
-Inside Jenkins container:
+Verify:
 
 ```bash
-ssh ubuntu@<PUBLIC_IP>
+ssh ubuntu@<EC2_PUBLIC_IP>
 ```
 
 No password should be requested.
@@ -248,107 +203,59 @@ Manage Jenkins
 → Credentials
 → System
 → Global Credentials
-→ Add Credentials
 ```
 
----
-
-## Credential Details
-
-Kind:
+Add:
 
 ```text
-SSH Username with private key
+Kind: SSH Username with private key
+
+Username: ubuntu
+
+ID: aws-prod-ssh
 ```
 
-Username:
-
-```text
-ubuntu
-```
-
-ID:
-
-```text
-aws-prod-ssh
-```
-
-Private Key:
-
-Paste contents of:
+Paste private key from:
 
 ```bash
 cat ~/.ssh/id_rsa
 ```
 
-from Jenkins container.
+inside Jenkins container.
 
 ---
 
-# GitHub Repository
+# Pipeline Job
 
-Repository:
-
-```text
-https://github.com/mdrahmanabdul/jenkins-demo
-```
-
----
-
-# Jenkins Pipeline Job
-
-Navigate:
+Create:
 
 ```text
 New Item
 → Pipeline
 ```
 
----
-
-## Configure
-
-Definition:
+Configuration:
 
 ```text
+Definition:
 Pipeline script from SCM
-```
 
 SCM:
-
-```text
 Git
-```
 
 Repository URL:
-
-```text
-https://github.com/mdrahmanabdul/jenkins-demo.git
-```
+https://github.com/<user>/<repo>.git
 
 Branch:
-
-```text
 */main
-```
 
 Script Path:
-
-```text
 JenkinsDemo/Jenkinsfile
 ```
 
 ---
 
 # Jenkinsfile
-
-Location:
-
-```text
-JenkinsDemo/Jenkinsfile
-```
-
-Content:
 
 ```groovy
 pipeline {
@@ -372,14 +279,12 @@ pipeline {
                 sshagent(['aws-prod-ssh']) {
 
                     sh '''
-                    ls -la JenkinsDemo/target
-
                     scp -o StrictHostKeyChecking=no \
                     JenkinsDemo/target/*.jar \
-                    ubuntu@16.176.176.250:/opt/spring-app/app.jar
+                    ubuntu@<EC2_PUBLIC_IP>:/opt/spring-app/app.jar
 
                     ssh -o StrictHostKeyChecking=no \
-                    ubuntu@16.176.176.250 \
+                    ubuntu@<EC2_PUBLIC_IP> \
                     "sudo systemctl restart spring-app"
                     '''
                 }
@@ -391,97 +296,31 @@ pipeline {
 
 ---
 
-# Useful Commands
+# Security Group Rules
 
-## Build Locally
+Inbound:
 
-```bash
-./mvnw clean package
-```
-
----
-
-## Manual Copy
-
-```bash
-scp -i jenkins-demo.pem \
-target/*.jar \
-ubuntu@16.176.176.250:/opt/spring-app/app.jar
-```
+| Port | Purpose     |
+| ---- | ----------- |
+| 22   | SSH         |
+| 8080 | Spring Boot |
+| 8081 | Jenkins     |
 
 ---
 
-## Start Application Manually
+# Troubleshooting Guide
 
-```bash
-java -jar /opt/spring-app/app.jar
-```
+## 1. Jenkinsfile Not Found
 
----
-
-## Check Service
-
-```bash
-sudo systemctl status spring-app
-```
-
----
-
-## Restart Service
-
-```bash
-sudo systemctl restart spring-app
-```
-
----
-
-## View Logs
-
-```bash
-sudo journalctl -xeu spring-app.service
-```
-
----
-
-## Check Port Usage
-
-```bash
-sudo lsof -i :8080
-```
-
-or
-
-```bash
-sudo ss -tulpn | grep 8080
-```
-
----
-
-## Test Application
-
-Inside EC2:
-
-```bash
-curl localhost:8080
-```
-
-From Browser:
+Error:
 
 ```text
-http://16.176.176.250:8080
+Unable to find Jenkinsfile
 ```
-
----
-
-# Common Issues
-
-## Jenkinsfile Not Found
 
 Cause:
 
-```text
-Wrong Script Path
-```
+Wrong script path.
 
 Fix:
 
@@ -491,13 +330,17 @@ JenkinsDemo/Jenkinsfile
 
 ---
 
-## mvnw Not Found
+## 2. mvnw Not Found
+
+Error:
+
+```text
+./mvnw: not found
+```
 
 Cause:
 
-```text
-Pipeline running from repository root
-```
+Pipeline running from repository root.
 
 Fix:
 
@@ -509,13 +352,17 @@ dir('JenkinsDemo') {
 
 ---
 
-## JAR Not Found
+## 3. JAR Not Found
+
+Error:
+
+```text
+scp: stat local "target/*.jar": No such file
+```
 
 Cause:
 
-```text
-Wrong target directory
-```
+Wrong target directory.
 
 Fix:
 
@@ -525,13 +372,57 @@ JenkinsDemo/target/*.jar
 
 ---
 
-## Port 8080 Not Accessible
+## 4. Permission Denied During SCP
+
+Error:
+
+```text
+Permission denied
+```
 
 Cause:
 
-```text
-Security Group missing 8080
+Copying directly into protected directory.
+
+Fix:
+
+Ensure correct ownership:
+
+```bash
+sudo chown -R ubuntu:ubuntu /opt/spring-app
 ```
+
+---
+
+## 5. systemctl Restart Failed
+
+Error:
+
+```text
+Job for spring-app.service failed
+```
+
+Cause:
+
+Application startup issue.
+
+Debug:
+
+```bash
+sudo systemctl status spring-app
+
+sudo journalctl -xeu spring-app.service
+
+java -jar /opt/spring-app/app.jar
+```
+
+---
+
+## 6. Port 8080 Not Reachable
+
+Cause:
+
+Security Group missing port 8080.
 
 Fix:
 
@@ -544,34 +435,185 @@ TCP 8080
 
 ---
 
-## SSH Authentication Failure
+## 7. Jenkins Container Exited (137)
+
+Error:
+
+```text
+Exited (137)
+```
+
+Cause:
+
+Out Of Memory (OOM)
+
+Diagnosis:
+
+```bash
+docker ps -a
+free -h
+```
+
+Observed:
+
+```text
+RAM: ~1 GB
+Swap: 0
+```
+
+Solution:
+
+Create swap:
+
+```bash
+sudo fallocate -l 2G /swapfile
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+```
+
+Persist:
+
+```bash
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+```
 
 Verify:
 
 ```bash
-ssh ubuntu@<PUBLIC_IP>
+free -h
 ```
-
-works from Jenkins container.
 
 ---
 
-# Final Flow
+## 8. Jenkins Node Offline
+
+Error:
 
 ```text
-Developer
-    ↓
+Disk space below threshold
+```
+
+Observed:
+
+```text
+Only 422 MB free
+```
+
+Cause:
+
+Root volume too small.
+
+Fix:
+
+Increase EBS volume:
+
+```text
+8 GB → 20 GB
+```
+
+Expand partition:
+
+```bash
+sudo growpart /dev/nvme0n1 1
+sudo resize2fs /dev/nvme0n1p1
+```
+
+Verify:
+
+```bash
+df -h
+```
+
+Result:
+
+```text
+19 GB total
+13 GB free
+```
+
+---
+
+# Useful Commands
+
+Check application:
+
+```bash
+curl localhost:8080
+```
+
+Restart application:
+
+```bash
+sudo systemctl restart spring-app
+```
+
+View logs:
+
+```bash
+sudo journalctl -xeu spring-app.service
+```
+
+Check Java process:
+
+```bash
+ps -ef | grep java
+```
+
+Check port:
+
+```bash
+sudo ss -tulpn | grep 8080
+```
+
+Check disk:
+
+```bash
+df -h
+```
+
+Check memory:
+
+```bash
+free -h
+```
+
+Check swap:
+
+```bash
+swapon --show
+```
+
+---
+
+# Lessons Learned
+
+1. CI/CD is not just Jenkins.
+2. Infrastructure issues often appear as build failures.
+3. Exit Code 137 usually means Out Of Memory.
+4. Jenkins requires adequate disk space and memory.
+5. systemd is the correct way to manage Spring Boot services.
+6. SSH-based deployments are simple and effective for learning.
+7. Debugging is a core DevOps skill.
+
+---
+
+# Final Result
+
+Successful deployment flow:
+
+```text
 git push
     ↓
 GitHub
     ↓
-Jenkins Pipeline
+Jenkins
     ↓
 Build Spring Boot JAR
     ↓
 Copy JAR to EC2
     ↓
-Restart systemd Service
+Restart Service
     ↓
 Application Updated
 ```
