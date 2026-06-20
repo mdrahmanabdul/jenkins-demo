@@ -4,13 +4,6 @@ pipeline {
 
     stages {
 
-        stage('Checkout') {
-            steps {
-                git branch: 'main',
-                url: 'https://github.com/your/repo.git'
-            }
-        }
-
         stage('Build') {
             steps {
                 sh './mvnw clean package'
@@ -18,17 +11,18 @@ pipeline {
         }
 
         stage('Deploy') {
-
             steps {
 
                 sshagent(['aws-prod-ssh']) {
 
                     sh '''
-                    scp target/*.jar ubuntu@AWS_IP:/opt/spring-app/app.jar
+                    scp -o StrictHostKeyChecking=no \
+                    target/*.jar \
+                    ubuntu@16.176.176.250:/opt/spring-app/app.jar
 
-                    ssh ubuntu@AWS_IP '
-                    sudo systemctl restart spring-app
-                    '
+                    ssh -o StrictHostKeyChecking=no \
+                    ubuntu@16.176.176.250 \
+                    "sudo systemctl restart spring-app"
                     '''
                 }
             }
