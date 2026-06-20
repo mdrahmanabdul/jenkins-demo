@@ -1,50 +1,69 @@
-# Spring Boot CI/CD with Jenkins and AWS EC2
+# Spring Boot CI/CD Pipeline with Jenkins, GitHub and AWS EC2
 
 ## Overview
 
 This project demonstrates a complete CI/CD pipeline using:
 
 * Spring Boot
+* Maven Wrapper (mvnw)
 * GitHub
-* Jenkins (Docker)
+* Jenkins (running inside Docker)
 * AWS EC2 (Ubuntu)
 * systemd
 
-The goal is to automatically build and deploy a Spring Boot application whenever changes are pushed to the `main` branch.
+The objective is to automatically build and deploy a Spring Boot application whenever code is pushed to the `main` branch.
 
 ---
 
-# Architecture
+# Final Architecture
 
 ```text
-GitHub
-   ↓
-Jenkins (Docker on EC2)
-   ↓
-Build Spring Boot JAR
-   ↓
-Deploy to EC2
-   ↓
-Restart systemd Service
-   ↓
-Application Available on Port 8080
+Developer
+    ↓
+git push origin main
+    ↓
+GitHub Webhook
+    ↓
+Jenkins Pipeline
+    ↓
+Maven Build
+    ↓
+Generate Spring Boot JAR
+    ↓
+Copy JAR to EC2
+    ↓
+Restart Spring Boot Service
+    ↓
+Application Updated
 ```
 
 ---
 
 # Infrastructure
 
-## EC2
+## EC2 Instance
 
-* Ubuntu 24/26
-* OpenJDK 17
-* Docker
-* Jenkins (running in Docker)
+Operating System:
+
+```text
+Ubuntu
+```
+
+Installed Software:
+
+```text
+OpenJDK 17
+Docker
+Jenkins (Docker Container)
+```
 
 ## Application
 
-* Spring Boot
-* Maven Wrapper (`mvnw`)
+```text
+Spring Boot
+Java 17
+Maven Wrapper (mvnw)
+```
 
 ---
 
@@ -74,15 +93,15 @@ sudo chown -R ubuntu:ubuntu /opt/spring-app
 
 ---
 
-# Create systemd Service
+# Configure Spring Boot Service
 
-File:
+Create:
 
 ```bash
 sudo nano /etc/systemd/system/spring-app.service
 ```
 
-Content:
+Contents:
 
 ```ini
 [Unit]
@@ -104,15 +123,20 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
-Enable:
+Enable service:
 
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable spring-app
+```
+
+Start service:
+
+```bash
 sudo systemctl start spring-app
 ```
 
-Check:
+Verify:
 
 ```bash
 sudo systemctl status spring-app
@@ -120,9 +144,9 @@ sudo systemctl status spring-app
 
 ---
 
-# Jenkins Setup
+# Install Jenkins Using Docker
 
-## Run Jenkins
+Start Jenkins:
 
 ```bash
 docker run -d \
@@ -134,7 +158,7 @@ docker run -d \
 jenkins/jenkins:lts-jdk17
 ```
 
-Access:
+Access Jenkins:
 
 ```text
 http://<EC2_PUBLIC_IP>:8081
@@ -142,15 +166,17 @@ http://<EC2_PUBLIC_IP>:8081
 
 ---
 
-# Jenkins SSH Access
+# Configure SSH Access For Deployment
 
-Enter Jenkins container:
+## Enter Jenkins Container
 
 ```bash
 docker exec -it jenkins bash
 ```
 
-Generate SSH key:
+---
+
+## Generate SSH Key
 
 ```bash
 ssh-keygen -t rsa -b 4096
@@ -162,22 +188,17 @@ View public key:
 cat ~/.ssh/id_rsa.pub
 ```
 
-Copy the public key.
-
 ---
 
-## Authorize Jenkins on EC2
+## Authorize Jenkins On EC2
 
-On EC2:
+Append the Jenkins public key to:
 
 ```bash
-mkdir -p ~/.ssh
-nano ~/.ssh/authorized_keys
+~/.ssh/authorized_keys
 ```
 
-Paste Jenkins public key.
-
-Permissions:
+Set permissions:
 
 ```bash
 chmod 700 ~/.ssh
@@ -190,13 +211,17 @@ Verify:
 ssh ubuntu@<EC2_PUBLIC_IP>
 ```
 
-No password should be requested.
+Expected:
+
+```text
+Login without password
+```
 
 ---
 
 # Jenkins Credentials
 
-Navigate:
+Navigate to:
 
 ```text
 Manage Jenkins
@@ -208,33 +233,36 @@ Manage Jenkins
 Add:
 
 ```text
-Kind: SSH Username with private key
+Kind:
+SSH Username with private key
 
-Username: ubuntu
+Username:
+ubuntu
 
-ID: aws-prod-ssh
+ID:
+aws-prod-ssh
 ```
 
-Paste private key from:
+Paste contents of:
 
 ```bash
 cat ~/.ssh/id_rsa
 ```
 
-inside Jenkins container.
+from inside the Jenkins container.
 
 ---
 
-# Pipeline Job
+# Create Jenkins Pipeline Job
 
-Create:
+Navigate to:
 
 ```text
 New Item
 → Pipeline
 ```
 
-Configuration:
+Configure:
 
 ```text
 Definition:
@@ -246,7 +274,7 @@ Git
 Repository URL:
 https://github.com/<user>/<repo>.git
 
-Branch:
+Branch Specifier:
 */main
 
 Script Path:
@@ -296,201 +324,130 @@ pipeline {
 
 ---
 
-# Security Group Rules
+# Configure GitHub Webhook
 
-Inbound:
+## Jenkins Configuration
 
-| Port | Purpose     |
-| ---- | ----------- |
-| 22   | SSH         |
-| 8080 | Spring Boot |
-| 8081 | Jenkins     |
+Open:
+
+```text
+Pipeline Job
+→ Configure
+→ Build Triggers
+```
+
+Enable:
+
+```text
+GitHub hook trigger for GITScm polling
+```
+
+Save.
 
 ---
 
-# Troubleshooting Guide
+## GitHub Configuration
 
-## 1. Jenkinsfile Not Found
-
-Error:
+Navigate to:
 
 ```text
-Unable to find Jenkinsfile
+GitHub Repository
+→ Settings
+→ Webhooks
+→ Add webhook
 ```
 
-Cause:
-
-Wrong script path.
-
-Fix:
+Configure:
 
 ```text
-JenkinsDemo/Jenkinsfile
+Payload URL:
+http://<JENKINS_PUBLIC_IP>:8081/github-webhook/
+
+Content Type:
+application/json
+
+Events:
+Just the push event
 ```
 
----
-
-## 2. mvnw Not Found
-
-Error:
+Example:
 
 ```text
-./mvnw: not found
+http://32.236.142.186:8081/github-webhook/
 ```
 
-Cause:
-
-Pipeline running from repository root.
-
-Fix:
-
-```groovy
-dir('JenkinsDemo') {
-    sh './mvnw clean package'
-}
-```
-
----
-
-## 3. JAR Not Found
-
-Error:
+Important:
 
 ```text
-scp: stat local "target/*.jar": No such file
+The URL must end with a trailing slash (/)
 ```
 
-Cause:
-
-Wrong target directory.
-
-Fix:
+Correct:
 
 ```text
-JenkinsDemo/target/*.jar
+http://<JENKINS_IP>:8081/github-webhook/
+```
+
+Incorrect:
+
+```text
+http://<JENKINS_IP>:8081/github-webhook
 ```
 
 ---
 
-## 4. Permission Denied During SCP
+# Security Group Configuration
 
-Error:
+Inbound Rules:
 
-```text
-Permission denied
-```
+| Port | Purpose                 |
+| ---- | ----------------------- |
+| 22   | SSH                     |
+| 8080 | Spring Boot Application |
+| 8081 | Jenkins                 |
+| 443  | HTTPS (Optional)        |
+| 80   | HTTP (Optional)         |
 
-Cause:
+---
 
-Copying directly into protected directory.
+# Testing The Pipeline
 
-Fix:
-
-Ensure correct ownership:
+Make a change:
 
 ```bash
-sudo chown -R ubuntu:ubuntu /opt/spring-app
+git add .
+git commit -m "Testing CI/CD"
+git push origin main
+```
+
+Expected flow:
+
+```text
+Git Push
+    ↓
+GitHub Webhook
+    ↓
+Jenkins Build
+    ↓
+Maven Package
+    ↓
+Deploy JAR
+    ↓
+Restart Spring Boot Service
+    ↓
+Production Updated
 ```
 
 ---
 
-## 5. systemctl Restart Failed
+# Infrastructure Improvements
 
-Error:
+## Increase EBS Volume
 
-```text
-Job for spring-app.service failed
-```
-
-Cause:
-
-Application startup issue.
-
-Debug:
-
-```bash
-sudo systemctl status spring-app
-
-sudo journalctl -xeu spring-app.service
-
-java -jar /opt/spring-app/app.jar
-```
-
----
-
-## 6. Port 8080 Not Reachable
-
-Cause:
-
-Security Group missing port 8080.
-
-Fix:
-
-Add inbound rule:
+Problem:
 
 ```text
-TCP 8080
-0.0.0.0/0
-```
-
----
-
-## 7. Jenkins Container Exited (137)
-
-Error:
-
-```text
-Exited (137)
-```
-
-Cause:
-
-Out Of Memory (OOM)
-
-Diagnosis:
-
-```bash
-docker ps -a
-free -h
-```
-
-Observed:
-
-```text
-RAM: ~1 GB
-Swap: 0
-```
-
-Solution:
-
-Create swap:
-
-```bash
-sudo fallocate -l 2G /swapfile
-sudo chmod 600 /swapfile
-sudo mkswap /swapfile
-sudo swapon /swapfile
-```
-
-Persist:
-
-```bash
-echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
-```
-
-Verify:
-
-```bash
-free -h
-```
-
----
-
-## 8. Jenkins Node Offline
-
-Error:
-
-```text
+Jenkins Node Offline
 Disk space below threshold
 ```
 
@@ -500,19 +457,15 @@ Observed:
 Only 422 MB free
 ```
 
-Cause:
+Solution:
 
-Root volume too small.
-
-Fix:
-
-Increase EBS volume:
+Increase EBS Volume:
 
 ```text
 8 GB → 20 GB
 ```
 
-Expand partition:
+Extend partition:
 
 ```bash
 sudo growpart /dev/nvme0n1 1
@@ -529,94 +482,323 @@ Result:
 
 ```text
 19 GB total
-13 GB free
+13 GB available
+```
+
+---
+
+## Add Swap Memory
+
+Problem:
+
+```text
+Jenkins Container Exited (137)
+```
+
+Meaning:
+
+```text
+Out Of Memory (OOM)
+```
+
+Observed:
+
+```text
+RAM : 908 MB
+Swap: 0 GB
+```
+
+Create swap:
+
+```bash
+sudo fallocate -l 2G /swapfile
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+```
+
+Persist after reboot:
+
+```bash
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+```
+
+Verify:
+
+```bash
+free -h
+swapon --show
+```
+
+Final state:
+
+```text
+RAM : 908 MB
+Swap: 2 GB
+```
+
+---
+
+# Troubleshooting Guide
+
+## Jenkinsfile Not Found
+
+Error:
+
+```text
+Unable to find Jenkinsfile
+```
+
+Fix:
+
+```text
+Script Path:
+JenkinsDemo/Jenkinsfile
+```
+
+---
+
+## Maven Wrapper Not Found
+
+Error:
+
+```text
+./mvnw: not found
+```
+
+Fix:
+
+```groovy
+dir('JenkinsDemo') {
+    sh './mvnw clean package'
+}
+```
+
+---
+
+## JAR Not Found
+
+Error:
+
+```text
+scp: stat local "target/*.jar": No such file
+```
+
+Fix:
+
+```text
+JenkinsDemo/target/*.jar
+```
+
+---
+
+## Permission Denied During SCP
+
+Error:
+
+```text
+Permission denied
+```
+
+Fix:
+
+```bash
+sudo chown -R ubuntu:ubuntu /opt/spring-app
+```
+
+---
+
+## Spring Boot Service Failed To Start
+
+Error:
+
+```text
+Job for spring-app.service failed
+```
+
+Debug Commands:
+
+```bash
+sudo systemctl status spring-app
+
+sudo journalctl -xeu spring-app.service
+
+java -jar /opt/spring-app/app.jar
+```
+
+---
+
+## Port 8080 Not Reachable
+
+Cause:
+
+```text
+Missing Security Group Rule
+```
+
+Fix:
+
+```text
+TCP 8080
+Source: 0.0.0.0/0
+```
+
+---
+
+## Jenkins Container Exited (137)
+
+Cause:
+
+```text
+Out Of Memory
+```
+
+Fix:
+
+```text
+Add 2 GB Swap
+```
+
+---
+
+## Jenkins Node Offline
+
+Cause:
+
+```text
+Low Disk Space
+```
+
+Fix:
+
+```text
+Increase EBS Volume
+```
+
+---
+
+## GitHub Webhook Returning 302
+
+Cause:
+
+```text
+Webhook URL missing trailing slash
+```
+
+Incorrect:
+
+```text
+http://<JENKINS_IP>:8081/github-webhook
+```
+
+Correct:
+
+```text
+http://<JENKINS_IP>:8081/github-webhook/
 ```
 
 ---
 
 # Useful Commands
 
-Check application:
+Check Application:
 
 ```bash
 curl localhost:8080
 ```
 
-Restart application:
+Restart Service:
 
 ```bash
 sudo systemctl restart spring-app
 ```
 
-View logs:
+View Logs:
 
 ```bash
 sudo journalctl -xeu spring-app.service
 ```
 
-Check Java process:
+Check Running Java Processes:
 
 ```bash
 ps -ef | grep java
 ```
 
-Check port:
+Check Port Usage:
 
 ```bash
 sudo ss -tulpn | grep 8080
 ```
 
-Check disk:
+Check Disk Space:
 
 ```bash
 df -h
 ```
 
-Check memory:
+Check Memory:
 
 ```bash
 free -h
 ```
 
-Check swap:
+Check Swap:
 
 ```bash
 swapon --show
+```
+
+Check Jenkins Container:
+
+```bash
+docker ps
+docker logs jenkins
 ```
 
 ---
 
 # Lessons Learned
 
-1. CI/CD is not just Jenkins.
+1. CI/CD involves much more than Jenkins.
 2. Infrastructure issues often appear as build failures.
-3. Exit Code 137 usually means Out Of Memory.
-4. Jenkins requires adequate disk space and memory.
-5. systemd is the correct way to manage Spring Boot services.
+3. Exit code 137 usually indicates Out Of Memory.
+4. Jenkins requires sufficient memory and disk space.
+5. systemd is the preferred way to manage Spring Boot services.
 6. SSH-based deployments are simple and effective for learning.
-7. Debugging is a core DevOps skill.
+7. GitHub Webhooks eliminate manual deployments.
+8. Debugging infrastructure is a critical DevOps skill.
+
+---
+
+# Future Improvements
+
+1. Use an Elastic IP instead of a temporary public IP.
+2. Remove hardcoded IP addresses from Jenkinsfile.
+3. Store deployment targets in Jenkins environment variables.
+4. Add a staging environment.
+5. Use Nginx as a reverse proxy.
+6. Enable HTTPS using Let's Encrypt.
+7. Containerize the application using Docker.
+8. Deploy using Kubernetes.
+9. Add automated tests before deployment.
 
 ---
 
 # Final Result
 
-Successful deployment flow:
+A fully automated CI/CD pipeline where:
 
 ```text
-git push
-    ↓
-GitHub
-    ↓
+git push origin main
+        ↓
+GitHub Webhook
+        ↓
 Jenkins
-    ↓
-Build Spring Boot JAR
-    ↓
-Copy JAR to EC2
-    ↓
-Restart Service
-    ↓
-Application Updated
+        ↓
+Build
+        ↓
+Deploy
+        ↓
+Production Updated
 ```
-testing0
-testing1
-testing2
