@@ -5,22 +5,23 @@ pipeline {
     stages {
 
         stage('Build') {
-    steps {
-        dir('JenkinsDemo') {
-            sh 'chmod +x mvnw'
-            sh './mvnw clean package'
+            steps {
+                dir('JenkinsDemo') {
+                    sh 'chmod +x mvnw'
+                    sh './mvnw clean package'
+                }
+            }
         }
-    }
-}
 
         stage('Deploy') {
             steps {
-
                 sshagent(['aws-prod-ssh']) {
 
                     sh '''
+                    ls -la JenkinsDemo/target
+
                     scp -o StrictHostKeyChecking=no \
-                    target/*.jar \
+                    JenkinsDemo/target/*.jar \
                     ubuntu@16.176.176.250:/opt/spring-app/app.jar
 
                     ssh -o StrictHostKeyChecking=no \
