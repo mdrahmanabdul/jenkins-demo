@@ -15,17 +15,16 @@ pipeline {
 
         stage('Deploy') {
             steps {
+
                 sshagent(['aws-prod-ssh']) {
 
                     sh '''
-                    ls -la JenkinsDemo/target
-
                     scp -o StrictHostKeyChecking=no \
                     JenkinsDemo/target/*.jar \
-                    ubuntu@16.176.176.250:/opt/spring-app/app.jar
+                    ubuntu@15.135.89.196:/opt/spring-app/app.jar
 
                     ssh -o StrictHostKeyChecking=no \
-                    ubuntu@16.176.176.250 \
+                    ubuntu@15.135.89.196 \
                     "sudo systemctl restart spring-app"
                     '''
                 }
